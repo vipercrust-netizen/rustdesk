@@ -33,6 +33,27 @@ pub fn core_main() -> Option<Vec<String>> {
         return None;
     }
     crate::load_custom_client();
+    // Posterum-IT: force custom RustDesk server settings
+    crate::ui_interface::set_option(
+        "custom-rendezvous-server".into(),
+        "desk.posterum-it.ru".into(),
+    );
+    
+    crate::ui_interface::set_option(
+        "relay-server".into(),
+        "desk.posterum-it.ru".into(),
+    );
+    
+    crate::ui_interface::set_option(
+        "api-server".into(),
+        "https://desk.posterum-it.ru".into(),
+    );
+    
+    crate::ui_interface::set_option(
+        "key".into(),
+        "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".into(),
+    );
+    
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
         // return None to terminate the process
