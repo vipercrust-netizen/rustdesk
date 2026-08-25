@@ -87,30 +87,6 @@ jobs:
 
           path.write_text(text[:start] + new + text[end:], encoding="utf-8")
 
-      - name: Patch installed service to use console session
-        shell: python
-        run: |
-          from pathlib import Path
-
-          path = Path("src/platform/windows.rs")
-          text = path.read_text(encoding="utf-8")
-
-          replacements = {
-              'let mut session_id = unsafe { get_current_session(share_rdp()) };':
-                  'let mut session_id = unsafe { get_current_session(FALSE) };',
-              'let current_active_session = unsafe { get_current_session(share_rdp()) };':
-                  'let current_active_session = unsafe { get_current_session(FALSE) };',
-              'let tmp = get_current_session(share_rdp());':
-                  'let tmp = get_current_session(FALSE);',
-          }
-
-          for old, new in replacements.items():
-              if old not in text:
-                  raise RuntimeError(f"Expected Windows service session line not found: {old}")
-              text = text.replace(old, new, 1)
-
-          path.write_text(text, encoding="utf-8")
-
       - name: Download Flutter bridge
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
