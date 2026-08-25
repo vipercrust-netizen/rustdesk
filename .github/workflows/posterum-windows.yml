@@ -32,7 +32,6 @@ jobs:
     needs:
       - generate-bridge
       - topmost-window
-
     runs-on: windows-2022
 
     steps:
@@ -52,115 +51,49 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-
           path = Path("src/core_main.rs")
           text = path.read_text(encoding="utf-8")
-
           start = text.find('    crate::load_custom_client();\n    // Posterum-IT: force custom RustDesk server settings')
           end_marker = '    #[cfg(windows)]\n    if !crate::platform::windows::bootstrap()'
           end = text.find(end_marker, start)
-
           if start < 0 or end < 0:
               raise RuntimeError("Posterum server settings block was not found in src/core_main.rs")
-
-          new = '''    crate::load_custom_client();
-
-              // Posterum-IT: configure the rendezvous stack directly through Config.
-              config::Config::set_option(
-                  "custom-rendezvous-server".to_owned(),
-                  "desk.posterum-it.ru".to_owned(),
-              );
-              config::Config::set_option(
-                  "relay-server".to_owned(),
-                  "desk.posterum-it.ru".to_owned(),
-              );
-              config::Config::set_option(
-                  "api-server".to_owned(),
-                  "https://desk.posterum-it.ru".to_owned(),
-              );
-              config::Config::set_option(
-                  "key".to_owned(),
-                  "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".to_owned(),
-              );
-
-              '''
-
+          new = (
+              '    crate::load_custom_client();\n\n'
+              '    // Posterum-IT: configure the rendezvous stack directly through Config.\n'
+              '    config::Config::set_option("custom-rendezvous-server".to_owned(), "desk.posterum-it.ru".to_owned());\n'
+              '    config::Config::set_option("relay-server".to_owned(), "desk.posterum-it.ru".to_owned());\n'
+              '    config::Config::set_option("api-server".to_owned(), "https://desk.posterum-it.ru".to_owned());\n'
+              '    config::Config::set_option("key".to_owned(), "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".to_owned());\n\n'
+          )
           path.write_text(text[:start] + new + text[end:], encoding="utf-8")
 
       - name: Patch installed main IPC for cross-session GUI
         shell: python
         run: |
           from pathlib import Path
-
           path = Path("src/ipc/auth.rs")
           text = path.read_text(encoding="utf-8")
-
-          old = '''    if !authorized {
-        log_rejected_windows_ipc_connection(
-            postfix,
-            peer_pid,
-            peer_session_id,
-            server_session_id,
-            peer_is_system,
-            peer_is_elevated,
-        );
-        return false;
-    }
-    if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {
-        log::warn!(
-            "Rejected unauthorized connection on ipc channel due to executable mismatch: postfix={}, peer_pid={:?}, err={}",
-            postfix,
-            peer_pid,
-            err
-        );
-        return false;
-    }
-    true
-'''
-
-          new = '''    // Posterum-IT: on some installed Windows systems RustDesk launches the
-    // privileged --server process in a different Windows session than tray/GUI.
-    // Keep the normal session check, but for the main IPC channel allow the
-    // installed RustDesk executable itself across that session boundary.
-    // Executable-path verification remains mandatory; arbitrary processes are rejected.
-    if !authorized {
-        if postfix.is_empty() && crate::platform::is_installed() {
-            if ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix).is_ok() {
-                log::debug!(
-                    "Posterum-IT: allowing installed same-executable IPC across Windows sessions: peer_pid={:?}, peer_session_id={:?}, server_session_id={:?}",
-                    peer_pid,
-                    peer_session_id,
-                    server_session_id
-                );
-                return true;
-            }
-        }
-        log_rejected_windows_ipc_connection(
-            postfix,
-            peer_pid,
-            peer_session_id,
-            server_session_id,
-            peer_is_system,
-            peer_is_elevated,
-        );
-        return false;
-    }
-    if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {
-        log::warn!(
-            "Rejected unauthorized connection on ipc channel due to executable mismatch: postfix={}, peer_pid={:?}, err={}",
-            postfix,
-            peer_pid,
-            err
-        );
-        return false;
-    }
-    true
-'''
-
-          if old not in text:
-              raise RuntimeError("Windows main IPC authorization block was not found in src/ipc/auth.rs")
-
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          marker = '    if !authorized {\n        log_rejected_windows_ipc_connection('
+          start = text.find(marker, text.find('pub(crate) fn authorize_windows_main_ipc_connection'))
+          end_marker = '    if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {'
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise RuntimeError("Windows main IPC authorization block was not found")
+          replacement = (
+              '    // Posterum-IT: allow the installed RustDesk executable itself to use main IPC across Windows sessions.\n'
+              '    if !authorized {\n'
+              '        if postfix.is_empty() && crate::platform::is_installed()\n'
+              '            && ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix).is_ok()\n'
+              '        {\n'
+              '            log::debug!("Posterum-IT: allowing installed same-executable IPC across Windows sessions: peer_pid={:?}, peer_session_id={:?}, server_session_id={:?}", peer_pid, peer_session_id, server_session_id);\n'
+              '            return true;\n'
+              '        }\n'
+              '        log_rejected_windows_ipc_connection(postfix, peer_pid, peer_session_id, server_session_id, peer_is_system, peer_is_elevated);\n'
+              '        return false;\n'
+              '    }\n'
+          )
+          path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
 
       - name: Download Flutter bridge
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -185,19 +118,9 @@ jobs:
         run: |
           flutter doctor -v
           flutter precache --windows
-
-          Invoke-WebRequest `
-            -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip `
-            -OutFile windows-x64-release.zip
-
-          Expand-Archive `
-            -Path windows-x64-release.zip `
-            -DestinationPath windows-x64-release
-
-          Move-Item `
-            -Force `
-            windows-x64-release/* `
-            C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          Move-Item -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
 
       - name: Patch Flutter
         shell: bash
@@ -230,48 +153,24 @@ jobs:
         env:
           VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
         run: |
-          if ! $VCPKG_ROOT/vcpkg \
-            install \
-            --triplet x64-windows-static \
-            --x-install-root="$VCPKG_ROOT/installed"; then
-
-            find "${VCPKG_ROOT}/" -name "*.log" | while read -r logfile; do
-              echo "$logfile:"
-              cat "$logfile"
-            done
-
+          if ! $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r logfile; do echo "$logfile:"; cat "$logfile"; done
             exit 1
           fi
 
       - name: Build RustDesk Windows x64
         shell: powershell
         run: |
-          python3 .\build.py `
-            --portable `
-            --flutter `
-            --skip-portable-pack `
-            --hwcodec `
-            --vram
-
-          Move-Item `
-            ./flutter/build/windows/x64/runner/Release `
-            ./rustdesk
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          Move-Item ./flutter/build/windows/x64/runner/Release ./rustdesk
 
       - name: Add virtual display driver
         shell: powershell
         run: |
-          Invoke-WebRequest `
-            -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip `
-            -OutFile usbmmidd_v2.zip
-
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
-
           Remove-Item usbmmidd_v2\Win32 -Recurse
-          Remove-Item `
-            usbmmidd_v2\deviceinstaller64.exe, `
-            usbmmidd_v2\deviceinstaller.exe, `
-            usbmmidd_v2\usbmmidd.bat
-
+          Remove-Item usbmmidd_v2\deviceinstaller64.exe,usbmmidd_v2\deviceinstaller.exe,usbmmidd_v2\usbmmidd.bat
           Move-Item -Force .\usbmmidd_v2 ./rustdesk
 
       - name: Download TopMost DLL
@@ -285,29 +184,18 @@ jobs:
         shell: bash
         run: |
           runner_res=$(find . -name "Runner.res")
-
-          if [ "$runner_res" != "" ]; then
-            cp "$runner_res" ./libs/portable/Runner.res
-          fi
+          if [ "$runner_res" != "" ]; then cp "$runner_res" ./libs/portable/Runner.res; fi
 
       - name: Build portable EXE
         shell: bash
         run: |
           sed -i '/dpiAware/d' res/manifest.xml
-
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py \
-            -f ../../rustdesk/ \
-            -o . \
-            -e ../../rustdesk/rustdesk.exe
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
           popd
-
           mkdir -p ./output
-
-          mv \
-            ./target/release/rustdesk-portable-packer.exe \
-            ./output/Posterum-RustDesk-x64.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./output/Posterum-RustDesk-x64.exe
 
       - name: Upload Posterum RustDesk
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
