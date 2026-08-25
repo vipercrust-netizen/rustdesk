@@ -56,30 +56,6 @@ jobs:
           path = Path("src/core_main.rs")
           text = path.read_text(encoding="utf-8")
 
-          old = '''    crate::load_custom_client();
-              // Posterum-IT: force custom RustDesk server settings
-              crate::ui_interface::set_option(
-                  "custom-rendezvous-server".into(),
-                  "desk.posterum-it.ru".into(),
-              );
-              
-              crate::ui_interface::set_option(
-                  "relay-server".into(),
-                  "desk.posterum-it.ru".into(),
-              );
-              
-              crate::ui_interface::set_option(
-                  "api-server".into(),
-                  "https://desk.posterum-it.ru".into(),
-              );
-              
-              crate::ui_interface::set_option(
-                  "key".into(),
-                  "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".into(),
-              );
-              '''
-
-          # Keep replacement whitespace-independent enough for the current fork.
           start = text.find('    crate::load_custom_client();\n    // Posterum-IT: force custom RustDesk server settings')
           end_marker = '    #[cfg(windows)]\n    if !crate::platform::windows::bootstrap()'
           end = text.find(end_marker, start)
@@ -90,7 +66,6 @@ jobs:
           new = '''    crate::load_custom_client();
 
               // Posterum-IT: configure the rendezvous stack directly through Config.
-              // This runs in both portable/UI processes and the installed Windows service.
               config::Config::set_option(
                   "custom-rendezvous-server".to_owned(),
                   "desk.posterum-it.ru".to_owned(),
@@ -111,6 +86,30 @@ jobs:
               '''
 
           path.write_text(text[:start] + new + text[end:], encoding="utf-8")
+
+      - name: Patch installed service to use console session
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/platform/windows.rs")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = {
+              'let mut session_id = unsafe { get_current_session(share_rdp()) };':
+                  'let mut session_id = unsafe { get_current_session(FALSE) };',
+              'let current_active_session = unsafe { get_current_session(share_rdp()) };':
+                  'let current_active_session = unsafe { get_current_session(FALSE) };',
+              'let tmp = get_current_session(share_rdp());':
+                  'let tmp = get_current_session(FALSE);',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise RuntimeError(f"Expected Windows service session line not found: {old}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
 
       - name: Download Flutter bridge
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
