@@ -87,6 +87,81 @@ jobs:
 
           path.write_text(text[:start] + new + text[end:], encoding="utf-8")
 
+      - name: Patch installed main IPC for cross-session GUI
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/ipc/auth.rs")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''    if !authorized {
+        log_rejected_windows_ipc_connection(
+            postfix,
+            peer_pid,
+            peer_session_id,
+            server_session_id,
+            peer_is_system,
+            peer_is_elevated,
+        );
+        return false;
+    }
+    if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {
+        log::warn!(
+            "Rejected unauthorized connection on ipc channel due to executable mismatch: postfix={}, peer_pid={:?}, err={}",
+            postfix,
+            peer_pid,
+            err
+        );
+        return false;
+    }
+    true
+'''
+
+          new = '''    // Posterum-IT: on some installed Windows systems RustDesk launches the
+    // privileged --server process in a different Windows session than tray/GUI.
+    // Keep the normal session check, but for the main IPC channel allow the
+    // installed RustDesk executable itself across that session boundary.
+    // Executable-path verification remains mandatory; arbitrary processes are rejected.
+    if !authorized {
+        if postfix.is_empty() && crate::platform::is_installed() {
+            if ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix).is_ok() {
+                log::debug!(
+                    "Posterum-IT: allowing installed same-executable IPC across Windows sessions: peer_pid={:?}, peer_session_id={:?}, server_session_id={:?}",
+                    peer_pid,
+                    peer_session_id,
+                    server_session_id
+                );
+                return true;
+            }
+        }
+        log_rejected_windows_ipc_connection(
+            postfix,
+            peer_pid,
+            peer_session_id,
+            server_session_id,
+            peer_is_system,
+            peer_is_elevated,
+        );
+        return false;
+    }
+    if let Err(err) = ensure_peer_executable_matches_current_by_pid_opt(peer_pid, postfix) {
+        log::warn!(
+            "Rejected unauthorized connection on ipc channel due to executable mismatch: postfix={}, peer_pid={:?}, err={}",
+            postfix,
+            peer_pid,
+            err
+        );
+        return false;
+    }
+    true
+'''
+
+          if old not in text:
+              raise RuntimeError("Windows main IPC authorization block was not found in src/ipc/auth.rs")
+
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
       - name: Download Flutter bridge
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
