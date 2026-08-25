@@ -15,11 +15,9 @@ env:
   VERSION: "1.4.9"
 
 jobs:
-  # RustDesk Flutter требует сгенерированный bridge.
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
 
-  # Дополнительная DLL RustDesk для Windows.
   topmost-window:
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     with:
@@ -49,6 +47,70 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
+
+      - name: Patch Posterum server settings into Config layer
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/core_main.rs")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''    crate::load_custom_client();
+              // Posterum-IT: force custom RustDesk server settings
+              crate::ui_interface::set_option(
+                  "custom-rendezvous-server".into(),
+                  "desk.posterum-it.ru".into(),
+              );
+              
+              crate::ui_interface::set_option(
+                  "relay-server".into(),
+                  "desk.posterum-it.ru".into(),
+              );
+              
+              crate::ui_interface::set_option(
+                  "api-server".into(),
+                  "https://desk.posterum-it.ru".into(),
+              );
+              
+              crate::ui_interface::set_option(
+                  "key".into(),
+                  "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".into(),
+              );
+              '''
+
+          # Keep replacement whitespace-independent enough for the current fork.
+          start = text.find('    crate::load_custom_client();\n    // Posterum-IT: force custom RustDesk server settings')
+          end_marker = '    #[cfg(windows)]\n    if !crate::platform::windows::bootstrap()'
+          end = text.find(end_marker, start)
+
+          if start < 0 or end < 0:
+              raise RuntimeError("Posterum server settings block was not found in src/core_main.rs")
+
+          new = '''    crate::load_custom_client();
+
+              // Posterum-IT: configure the rendezvous stack directly through Config.
+              // This runs in both portable/UI processes and the installed Windows service.
+              config::Config::set_option(
+                  "custom-rendezvous-server".to_owned(),
+                  "desk.posterum-it.ru".to_owned(),
+              );
+              config::Config::set_option(
+                  "relay-server".to_owned(),
+                  "desk.posterum-it.ru".to_owned(),
+              );
+              config::Config::set_option(
+                  "api-server".to_owned(),
+                  "https://desk.posterum-it.ru".to_owned(),
+              );
+              config::Config::set_option(
+                  "key".to_owned(),
+                  "csgXC8Lauk982hYBWiTdMSEtwFa+h2VBPsvqLB5cO5U=".to_owned(),
+              );
+
+              '''
+
+          path.write_text(text[:start] + new + text[end:], encoding="utf-8")
 
       - name: Download Flutter bridge
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
